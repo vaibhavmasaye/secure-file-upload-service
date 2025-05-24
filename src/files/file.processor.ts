@@ -54,29 +54,45 @@ export class FileProcessor {
 
     for (const job of queuedJobs) {
       try {
-        const file = job.file as File;  // Correct capitalization here
-        if (!file || !file.path) {
-          this.logger.error(`File or file path is missing for job ${job.id}`);
-          continue; // Skip this job to avoid crash
+        this.logger.log(`\n--- Start processing job ID: ${job.id} ---`);
+    
+        const file = Array.isArray((job as any).files)
+          ? (job as any).files[0]
+          : (job as any).file;
+    
+        this.logger.log(`Retrieved file: ${JSON.stringify(file, null, 2)}`);
+    
+        if (!file || !file.destination) {
+          this.logger.error(`File or file.destination is missing for job ${job.id}`);
+          continue;
         }
-        const filePath = file.path;
     
-        this.logger.log(`Processing file ID ${file.id} for job ID ${job.id}`);
+        const filePath = file.destination;
+        this.logger.log(`File path: ${filePath}`);
     
-        // Update job and file status to processing
+        this.logger.log(`Updating job ${job.id} to 'processing' status...`);
         await this.jobModel.update(
           { status: 'processing', startedAt: new Date() },
           { where: { id: job.id } }
         );
+    
+        this.logger.log(`Updating file ${file.id} to 'processing' status...`);
         await this.fileModel.update(
           { status: 'processing' },
           { where: { id: file.id } }
         );
     
-        // Process file
+        this.logger.log(`Getting file stats for: ${filePath}`);
         const fileStats = await stat(filePath);
+        this.logger.log(`File stats: ${JSON.stringify(fileStats)}`);
+    
+        this.logger.log(`Reading file: ${filePath}`);
         const fileBuffer = await readFile(filePath);
+        this.logger.log(`Read file buffer of length: ${fileBuffer.length}`);
+    
         const hash = createHash('sha256').update(fileBuffer).digest('hex');
+        this.logger.log(`Generated SHA256 hash: ${hash}`);
+    
         const extractedData = {
           hash,
           size: fileStats.size,
@@ -87,7 +103,9 @@ export class FileProcessor {
           mimeType: this.getMimeType(extname(filePath)),
         };
     
-        // Update file with processed data and mark as processed
+        this.logger.log(`Extracted data: ${JSON.stringify(extractedData, null, 2)}`);
+    
+        this.logger.log(`Updating file ${file.id} to 'processed' status...`);
         await this.fileModel.update(
           {
             status: 'processed',
@@ -96,19 +114,21 @@ export class FileProcessor {
           { where: { id: file.id } }
         );
     
-        // Update job to completed
+        this.logger.log(`Updating job ${job.id} to 'completed' status...`);
         await this.jobModel.update(
           { status: 'completed', completedAt: new Date() },
           { where: { id: job.id } }
         );
     
-        this.logger.log(`Successfully processed file ${file.id} for job ${job.id}`);
+        this.logger.log(`✅ Successfully processed file ${file.id} for job ${job.id}`);
+        this.logger.log(`--- Finished processing job ID: ${job.id} ---\n`);
+    
       } catch (error) {
-        this.logger.error(`Error processing job ${job.id}: ${error.message}`);
+        this.logger.error(`❌ Error processing job ${job.id}: ${error.message}`);
     
         await this.fileModel.update(
           { status: 'failed' },
-          { where: { id: job.fileId } }
+          { where: { id: (job as any).fileId } }
         );
         await this.jobModel.update(
           {
@@ -120,6 +140,8 @@ export class FileProcessor {
         );
       }
     }
+    
+    
     
   }
 }
