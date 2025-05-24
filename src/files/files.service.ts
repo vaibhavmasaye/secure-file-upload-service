@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException, InternalServerErrorException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/sequelize';
 import { CreateFileDto } from './dto/create-file.dto';
+import { join } from 'path';
 
 import { File } from './entities/file.model';
 import { Job } from './entities/job.model';
@@ -20,22 +21,24 @@ export class FilesService {
     console.log('[Files Service] File:', file);
     console.log('[Files Service] DTO:', dto);
   
-    // Validate file existence
-    if (!file?.path) {
-      throw new InternalServerErrorException('File path not available');
+    if (!file || !file.destination) {
+      throw new InternalServerErrorException('File destination not available');
     }
   
-    // Save to DB
+    // Construct full file path
+    const fullFilePath = join(file.destination, file.filename);
+  
     try {
       const savedFile = await this.fileModel.create({
         filename: file.filename,
         originalname: file.originalname,
-        path: file.path,
         mimetype: file.mimetype,
-        size: file.size,
+        destination: fullFilePath, // store full path here
+        status: 'uploaded',
         userId: userId,
+        extractedData: null,
+        uploadedAt: new Date(),
         description: dto.description,
-        tags: dto.tags,
       });
   
       return savedFile;
@@ -44,8 +47,6 @@ export class FilesService {
       throw new InternalServerErrorException('Could not save file to DB');
     }
   }
-  
-  
 
   async findOne(id: number, user: User) {
     const file = await this.fileModel.findOne({
