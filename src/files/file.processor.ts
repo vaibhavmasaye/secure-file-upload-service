@@ -1,21 +1,13 @@
-import { Processor, Process } from '@nestjs/bull';
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectModel } from '@nestjs/sequelize';
-import { Job } from 'bull';
+import { Cron, CronExpression, Interval } from '@nestjs/schedule';
 import { createHash } from 'crypto';
 import { readFile, stat } from 'fs/promises';
 import { extname } from 'path';
 import { File } from './entities/file.model';
 import { Job as JobModel } from './entities/job.model';
 
-type FileStatus = 'uploaded' | 'processing' | 'processed' | 'failed';
-type JobStatus = 'queued' | 'processing' | 'completed' | 'failed';
-type MimeTypes = {
-  [key: string]: string;
-};
-
 @Injectable()
-@Processor('file-processing')
 export class FileProcessor {
   private readonly logger = new Logger(FileProcessor.name);
 
@@ -27,7 +19,7 @@ export class FileProcessor {
   ) {}
 
   private getMimeType(extension: string): string {
-    const mimeTypes: MimeTypes = {
+    const mimeTypes = {
       '.pdf': 'application/pdf',
       '.doc': 'application/msword',
       '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
@@ -39,86 +31,95 @@ export class FileProcessor {
       '.csv': 'text/csv',
       '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     };
-    return mimeTypes[extension.toLowerCase()] || 'application/octet-stream';
+    return mimeTypes[extension.toLowerCase() as keyof typeof mimeTypes] || 'application/octet-stream';
   }
 
-  @Process('process-file')
-  async processFile(job: Job<{ fileId: number; jobId: number; filePath: string }>) {
-    const { fileId, jobId, filePath } = job.data;
-    this.logger.log(`Processing file ${fileId} with job ${jobId}`);
+  // Run every minute (you can change to your desired cron schedule)
+  @Interval(10000) // runs every 10 seconds
+  @Cron(CronExpression.EVERY_MINUTE)
+  async handleCron() {
+    this.logger.log('Running scheduled file processing task...');
 
-    try {
-      // Update job status to processing
-      await this.jobModel.update(
-        {
-          status: 'processing' as JobStatus,
-          startedAt: new Date(),
-        },
-        { where: { id: jobId } }
-      );
+    // Query jobs with queued status and files uploaded (example logic)
+    const queuedJobs = await this.jobModel.findAll({
+      where: { status: 'queued' },
+      include: [{ model: this.fileModel, where: { status: 'uploaded' } }],
+      limit: 5, // process max 5 per run for example
+    });
 
-      // Update file status
-      await this.fileModel.update(
-        { status: 'processing' as FileStatus },
-        { where: { id: fileId } }
-      );
-
-      // Get file stats
-      const fileStats = await stat(filePath);
-      const fileBuffer = await readFile(filePath);
-      
-      // Calculate file hash
-      const hash = createHash('sha256').update(fileBuffer).digest('hex');
-
-      // Extract comprehensive metadata
-      const extractedData = {
-        hash,
-        size: fileStats.size,
-        extension: extname(filePath).toLowerCase(),
-        lastModified: fileStats.mtime.toISOString(),
-        created: fileStats.birthtime.toISOString(),
-        processedAt: new Date().toISOString(),
-        mimeType: this.getMimeType(extname(filePath)),
-      };
-
-      // Update file with processed data
-      await this.fileModel.update(
-        {
-          status: 'processed' as FileStatus,
-          extractedData: JSON.stringify(extractedData),
-        },
-        { where: { id: fileId } }
-      );
-
-      // Update job status to completed
-      await this.jobModel.update(
-        {
-          status: 'completed' as JobStatus,
-          completedAt: new Date(),
-        },
-        { where: { id: jobId } }
-      );
-
-      this.logger.log(`Successfully processed file ${fileId}`);
-      return { success: true };
-    } catch (error) {
-      this.logger.error(`Error processing file ${fileId}: ${error.message}`);
-      
-      // Update file and job status to failed
-      await this.fileModel.update(
-        { status: 'failed' as FileStatus },
-        { where: { id: fileId } }
-      );
-      await this.jobModel.update(
-        {
-          status: 'failed' as JobStatus,
-          errorMessage: error.message,
-          completedAt: new Date()
-        },
-        { where: { id: jobId } }
-      );
-
-      throw error;
+    if (queuedJobs.length === 0) {
+      this.logger.log('No queued jobs found at this time.');
+      return;
     }
+
+    for (const job of queuedJobs) {
+      try {
+        const file = job.file as File;  // Correct capitalization here
+        if (!file || !file.path) {
+          this.logger.error(`File or file path is missing for job ${job.id}`);
+          continue; // Skip this job to avoid crash
+        }
+        const filePath = file.path;
+    
+        this.logger.log(`Processing file ID ${file.id} for job ID ${job.id}`);
+    
+        // Update job and file status to processing
+        await this.jobModel.update(
+          { status: 'processing', startedAt: new Date() },
+          { where: { id: job.id } }
+        );
+        await this.fileModel.update(
+          { status: 'processing' },
+          { where: { id: file.id } }
+        );
+    
+        // Process file
+        const fileStats = await stat(filePath);
+        const fileBuffer = await readFile(filePath);
+        const hash = createHash('sha256').update(fileBuffer).digest('hex');
+        const extractedData = {
+          hash,
+          size: fileStats.size,
+          extension: extname(filePath).toLowerCase(),
+          lastModified: fileStats.mtime.toISOString(),
+          created: fileStats.birthtime.toISOString(),
+          processedAt: new Date().toISOString(),
+          mimeType: this.getMimeType(extname(filePath)),
+        };
+    
+        // Update file with processed data and mark as processed
+        await this.fileModel.update(
+          {
+            status: 'processed',
+            extractedData: JSON.stringify(extractedData),
+          },
+          { where: { id: file.id } }
+        );
+    
+        // Update job to completed
+        await this.jobModel.update(
+          { status: 'completed', completedAt: new Date() },
+          { where: { id: job.id } }
+        );
+    
+        this.logger.log(`Successfully processed file ${file.id} for job ${job.id}`);
+      } catch (error) {
+        this.logger.error(`Error processing job ${job.id}: ${error.message}`);
+    
+        await this.fileModel.update(
+          { status: 'failed' },
+          { where: { id: job.fileId } }
+        );
+        await this.jobModel.update(
+          {
+            status: 'failed',
+            errorMessage: error.message,
+            completedAt: new Date(),
+          },
+          { where: { id: job.id } }
+        );
+      }
+    }
+    
   }
 }

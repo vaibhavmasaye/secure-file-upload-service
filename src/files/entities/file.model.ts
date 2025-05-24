@@ -6,6 +6,7 @@ import { Job } from './job.model';
   timestamps: true,
 })
 export class File extends Model {
+  [x: string]: any;
 
   @Column
   originalname: string;

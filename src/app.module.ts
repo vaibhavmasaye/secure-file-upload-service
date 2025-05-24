@@ -3,6 +3,7 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { SequelizeModule } from '@nestjs/sequelize';
 import { BullModule } from '@nestjs/bull';
 import { ThrottlerModule } from '@nestjs/throttler';
+import { ScheduleModule } from '@nestjs/schedule';
 import { AuthModule } from './auth/auth.module';
 import { FilesModule } from './files/files.module';
 import { User } from './auth/entities/user.model';
@@ -45,6 +46,8 @@ import { getDatabaseConfig } from './config/database.config';
         }
       })
     }),
+
+    ScheduleModule.forRoot(),
 
     // Feature modules
     AuthModule,
