@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, InternalServerErrorException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/sequelize';
 import { CreateFileDto } from './dto/create-file.dto';
 
@@ -16,44 +16,36 @@ export class FilesService {
     private readonly jobModel: typeof Job,
     @InjectQueue('file-processing') private fileProcessingQueue: any,
   ) {}
-
-  async create(createFileDto: CreateFileDto, file: Express.Multer.File, user: User) {
-    // Create file record
-    const fileEntity = await this.fileModel.create({
-      originalname: file.originalname,
-      filename: file.filename,
-      mimetype: file.mimetype,
-      destination: file.destination,
-      status: 'uploaded',
-      userId: user.id,
-    });
-
-    // Create job entry
-    const jobEntity = await this.jobModel.create({
-      fileId: fileEntity.id,
-      jobId: `${fileEntity.id}-${Date.now()}`,
-      status: 'pending',
-    });
-
-    // Add to processing queue
-    await this.fileProcessingQueue.add(
-      'process-file',
-      {
-        fileId: fileEntity.id,
-        jobId: jobEntity.id,
-        filePath: file.path,
-      },
-      {
-        attempts: 3,
-        backoff: {
-          type: 'exponential',
-          delay: 2000,
-        },
-      },
-    );
-
-    return fileEntity;
+  async create(file: Express.Multer.File, dto: CreateFileDto, userId: number) {
+    console.log('[Files Service] File:', file);
+    console.log('[Files Service] DTO:', dto);
+  
+    // Validate file existence
+    if (!file?.path) {
+      throw new InternalServerErrorException('File path not available');
+    }
+  
+    // Save to DB
+    try {
+      const savedFile = await this.fileModel.create({
+        filename: file.filename,
+        originalname: file.originalname,
+        path: file.path,
+        mimetype: file.mimetype,
+        size: file.size,
+        userId: userId,
+        description: dto.description,
+        tags: dto.tags,
+      });
+  
+      return savedFile;
+    } catch (err) {
+      console.error('[Files Service] DB error:', err);
+      throw new InternalServerErrorException('Could not save file to DB');
+    }
   }
+  
+  
 
   async findOne(id: number, user: User) {
     const file = await this.fileModel.findOne({

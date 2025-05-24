@@ -1,4 +1,5 @@
-import { Controller, Post, Get, Param, Query, UseGuards, UseInterceptors, UploadedFile, Body, ParseIntPipe } from '@nestjs/common';
+import { Controller, Post, Get, Param, Query, UseGuards, UseInterceptors, UploadedFile, Body, ParseIntPipe, BadRequestException, Req, InternalServerErrorException } from '@nestjs/common';
+import { Request } from 'express';
 import { AuthGuard } from '@nestjs/passport';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { FilesService } from './files.service';
@@ -11,30 +12,32 @@ import { User } from '../auth/entities/user.model';
 export class FilesController {
   constructor(private readonly filesService: FilesService) {}
 
-  @Post('upload')
+  @UseGuards(AuthGuard('jwt'))
   @UseInterceptors(FileInterceptor('file'))
+  @Post('upload')
   async uploadFile(
     @UploadedFile() file: Express.Multer.File,
     @Body() createFileDto: CreateFileDto,
-    @GetUser() user: User,
+    @Req() req: Request,
   ) {
-    console.log('[Files Controller] Starting file upload process');
-    console.log('[Files Controller] File details:', {
-      originalname: file.originalname,
-      mimetype: file.mimetype,
-      size: file.size,
-      destination: file.destination,
-      path: file.path
-    });
-
-    const result = await this.filesService.create(createFileDto, file, user);
-    console.log('[Files Controller] File upload successful:', result);
-    return {
-      success: true,
-      message: 'File uploaded successfully',
-      data: result
-    };
+    try {
+      console.log('[Files Controller] File:', file);
+      console.log('[Files Controller] Body:', createFileDto);
+  
+      if (!file) {
+        throw new BadRequestException('No file uploaded');
+      }
+  
+      const userId = (req.user as any).id;
+      return await this.filesService.create(file, createFileDto, userId);
+    } catch (error) {
+      console.error('[Files Controller] Error during upload:', error);
+      throw error;
+    }
   }
+  
+
+  
 
   @Get(':id')
   async getFile(
