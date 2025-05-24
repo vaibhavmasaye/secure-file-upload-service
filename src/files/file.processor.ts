@@ -18,7 +18,7 @@ export class FileProcessor {
     private readonly fileModel: typeof File,
     @InjectModel(JobModel)
     private readonly jobModel: typeof JobModel,
-  ) {}
+  ) { }
 
   private getMimeType(extension: string): string {
     const mimeTypes = {
@@ -114,8 +114,11 @@ export class FileProcessor {
         const extension = extname(filePath).toLowerCase();
         const mimeType = this.getMimeType(extension);
 
-        const extractedText = await this.extractTextFromFile(filePath, mimeType);
+        const extractedTextRaw = await this.extractTextFromFile(filePath, mimeType);
+        // Normalize newlines (if any double-escaped exist)
+        const extractedText = extractedTextRaw.replace(/\\n/g, '\n').replace(/\n+/g, '\n').trim();
 
+        
         const extractedData = {
           hash,
           size: fileStats.size,
