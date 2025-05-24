@@ -6,9 +6,6 @@ import { ThrottlerModule } from '@nestjs/throttler';
 import { ScheduleModule } from '@nestjs/schedule';
 import { AuthModule } from './auth/auth.module';
 import { FilesModule } from './files/files.module';
-import { User } from './auth/entities/user.model';
-import { File } from './files/entities/file.model';
-import { Job } from './files/entities/job.model';
 import { HealthModule } from './health/health.module';
 import { getDatabaseConfig } from './config/database.config';
 

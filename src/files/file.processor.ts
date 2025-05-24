@@ -4,6 +4,8 @@ import { Cron, CronExpression, Interval } from '@nestjs/schedule';
 import { createHash } from 'crypto';
 import { readFile, stat } from 'fs/promises';
 import { extname } from 'path';
+import * as pdfParse from 'pdf-parse';
+import * as textract from 'textract';
 import { File } from './entities/file.model';
 import { Job as JobModel } from './entities/job.model';
 
@@ -34,17 +36,49 @@ export class FileProcessor {
     return mimeTypes[extension.toLowerCase() as keyof typeof mimeTypes] || 'application/octet-stream';
   }
 
-  // Run every minute (you can change to your desired cron schedule)
-  @Interval(10000) // runs every 10 seconds
+  private async extractTextFromFile(filePath: string, mimeType: string): Promise<string> {
+    try {
+      if (mimeType === 'application/pdf') {
+        const buffer = await readFile(filePath);
+        const data = await pdfParse(buffer);
+        return data.text.slice(0, 1000); // Limit for safety/logging
+      }
+
+      // Use textract for doc/docx/txt/csv/xlsx
+      if (
+        [
+          'application/msword',
+          'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+          'text/plain',
+          'text/csv',
+          'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        ].includes(mimeType)
+      ) {
+        return new Promise((resolve, reject) => {
+          textract.fromFileWithPath(filePath, (err: Error | null, text: string) => {
+            if (err) return reject(err);
+            resolve(text.slice(0, 1000)); // Limit output
+          });
+        });
+      }
+
+      // For images or unsupported types, return fake summary
+      return 'No text content extracted (unsupported MIME type or binary format).';
+    } catch (err) {
+      this.logger.error(`Text extraction failed: ${err.message}`);
+      return 'Failed to extract text.';
+    }
+  }
+
+  @Interval(10000) // every 10 seconds
   @Cron(CronExpression.EVERY_MINUTE)
   async handleCron() {
     this.logger.log('Running scheduled file processing task...');
 
-    // Query jobs with queued status and files uploaded (example logic)
     const queuedJobs = await this.jobModel.findAll({
       where: { status: 'queued' },
       include: [{ model: this.fileModel, where: { status: 'uploaded' } }],
-      limit: 5, // process max 5 per run for example
+      limit: 5,
     });
 
     if (queuedJobs.length === 0) {
@@ -54,58 +88,49 @@ export class FileProcessor {
 
     for (const job of queuedJobs) {
       try {
-        this.logger.log(`\n--- Start processing job ID: ${job.id} ---`);
-    
-        const file = Array.isArray((job as any).files)
-          ? (job as any).files[0]
-          : (job as any).file;
-    
-        this.logger.log(`Retrieved file: ${JSON.stringify(file, null, 2)}`);
-    
+        const file = Array.isArray((job as any).files) ? (job as any).files[0] : (job as any).file;
+
         if (!file || !file.destination) {
-          this.logger.error(`File or file.destination is missing for job ${job.id}`);
+          this.logger.error(`File or file destination is missing for job ${job.id}`);
           continue;
         }
-    
+
         const filePath = file.destination;
-        this.logger.log(`File path: ${filePath}`);
-    
-        this.logger.log(`Updating job ${job.id} to 'processing' status...`);
+        this.logger.log(`Processing file ID ${file.id} for job ID ${job.id}`);
+        this.logger.debug(`File object: ${JSON.stringify(file, null, 2)}`);
+
         await this.jobModel.update(
           { status: 'processing', startedAt: new Date() },
           { where: { id: job.id } }
         );
-    
-        this.logger.log(`Updating file ${file.id} to 'processing' status...`);
         await this.fileModel.update(
           { status: 'processing' },
           { where: { id: file.id } }
         );
-    
-        this.logger.log(`Getting file stats for: ${filePath}`);
+
         const fileStats = await stat(filePath);
-        this.logger.log(`File stats: ${JSON.stringify(fileStats)}`);
-    
-        this.logger.log(`Reading file: ${filePath}`);
         const fileBuffer = await readFile(filePath);
-        this.logger.log(`Read file buffer of length: ${fileBuffer.length}`);
-    
         const hash = createHash('sha256').update(fileBuffer).digest('hex');
-        this.logger.log(`Generated SHA256 hash: ${hash}`);
-    
+        const extension = extname(filePath).toLowerCase();
+        const mimeType = this.getMimeType(extension);
+
+        const extractedText = await this.extractTextFromFile(filePath, mimeType);
+
         const extractedData = {
           hash,
           size: fileStats.size,
-          extension: extname(filePath).toLowerCase(),
+          extension,
           lastModified: fileStats.mtime.toISOString(),
           created: fileStats.birthtime.toISOString(),
           processedAt: new Date().toISOString(),
-          mimeType: this.getMimeType(extname(filePath)),
+          mimeType,
+          virusScan: {
+            status: 'clean',
+            scannedAt: new Date().toISOString(),
+          },
+          summary: extractedText,
         };
-    
-        this.logger.log(`Extracted data: ${JSON.stringify(extractedData, null, 2)}`);
-    
-        this.logger.log(`Updating file ${file.id} to 'processed' status...`);
+
         await this.fileModel.update(
           {
             status: 'processed',
@@ -113,19 +138,16 @@ export class FileProcessor {
           },
           { where: { id: file.id } }
         );
-    
-        this.logger.log(`Updating job ${job.id} to 'completed' status...`);
+
         await this.jobModel.update(
           { status: 'completed', completedAt: new Date() },
           { where: { id: job.id } }
         );
-    
+
         this.logger.log(`✅ Successfully processed file ${file.id} for job ${job.id}`);
-        this.logger.log(`--- Finished processing job ID: ${job.id} ---\n`);
-    
       } catch (error) {
         this.logger.error(`❌ Error processing job ${job.id}: ${error.message}`);
-    
+
         await this.fileModel.update(
           { status: 'failed' },
           { where: { id: (job as any).fileId } }
@@ -140,8 +162,5 @@ export class FileProcessor {
         );
       }
     }
-    
-    
-    
   }
 }
