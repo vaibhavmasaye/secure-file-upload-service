@@ -1,4 +1,5 @@
 import { Injectable, NotFoundException, InternalServerErrorException } from '@nestjs/common';
+import { v4 as uuidv4 } from 'uuid';
 import { InjectModel } from '@nestjs/sequelize';
 import { CreateFileDto } from './dto/create-file.dto';
 import { join } from 'path';
@@ -25,43 +26,55 @@ export class FilesService {
       throw new InternalServerErrorException('File destination not available');
     }
   
-    // Construct full file path
     const fullFilePath = join(file.destination, file.filename);
   
     try {
+      // Step 1: Save File Record
       const savedFile = await this.fileModel.create({
         filename: file.filename,
         originalname: file.originalname,
         mimetype: file.mimetype,
         destination: fullFilePath,
         status: 'uploaded',
-        userId: userId,
+        userId,
         extractedData: null,
         uploadedAt: new Date(),
-        description: dto.description,
       });
   
-      // Create job record
-      const job = await this.jobModel.create({
+      // Step 2: Create Job Record
+      const jobRecord = await this.jobModel.create({
+        jobId: uuidv4(),
         fileId: savedFile.id,
         status: 'queued',
-        createdAt: new Date(),
+        startedAt: new Date(),
       });
   
-      // Add processing job to queue
-      await this.fileProcessingQueue.add('process-file', {
+      // Prepare response first
+      const response = {
+        ...savedFile.toJSON(),
+        jobId: jobRecord.jobId,
+        uploadStatus: 'uploaded',
+      };
+  
+      // Add job to queue asyncronously after response
+      this.fileProcessingQueue.add('extract-file-data', {
         fileId: savedFile.id,
-        jobId: job.id,
         filePath: fullFilePath,
-      });
+      })
+        .catch(async (error: any) => {
+          console.error('[Queue Error] Failed to add job:', error);
+          await this.jobModel.update({
+            status: 'failed',
+            errorMessage: 'Failed to add job to queue',
+            completedAt: new Date()
+          }, { where: { id: jobRecord.id } });
+        });
+
+      return response;
   
-      // Return file with job association
-      return await this.fileModel.findByPk(savedFile.id, {
-        include: [{ model: Job }],
-      });
     } catch (err) {
-      console.error('[Files Service] DB error:', err);
-      throw new InternalServerErrorException('Could not save file to DB');
+      console.error('[Files Service] Error saving file or job:', err);
+      throw new InternalServerErrorException('Could not save file and job to DB');
     }
   }
 
