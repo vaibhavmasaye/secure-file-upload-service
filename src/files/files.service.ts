@@ -33,7 +33,7 @@ export class FilesService {
         filename: file.filename,
         originalname: file.originalname,
         mimetype: file.mimetype,
-        destination: fullFilePath, // store full path here
+        destination: fullFilePath,
         status: 'uploaded',
         userId: userId,
         extractedData: null,
@@ -41,7 +41,24 @@ export class FilesService {
         description: dto.description,
       });
   
-      return savedFile;
+      // Create job record
+      const job = await this.jobModel.create({
+        fileId: savedFile.id,
+        status: 'queued',
+        createdAt: new Date(),
+      });
+  
+      // Add processing job to queue
+      await this.fileProcessingQueue.add('process-file', {
+        fileId: savedFile.id,
+        jobId: job.id,
+        filePath: fullFilePath,
+      });
+  
+      // Return file with job association
+      return await this.fileModel.findByPk(savedFile.id, {
+        include: [{ model: Job }],
+      });
     } catch (err) {
       console.error('[Files Service] DB error:', err);
       throw new InternalServerErrorException('Could not save file to DB');

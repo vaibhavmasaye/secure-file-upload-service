@@ -1,12 +1,12 @@
 import { Column, Model, Table, DataType, HasOne } from 'sequelize-typescript';
-import { Job } from './job.model'; // Adjust the path as per your project structure
-
+import { Job } from './job.model';
 
 @Table({
   tableName: 'files',
   timestamps: true,
 })
 export class File extends Model {
+
   @Column
   originalname: string;
 
