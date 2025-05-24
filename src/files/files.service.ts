@@ -53,22 +53,24 @@ export class FilesService {
       where: { id, userId: user.id },
       include: [{ model: Job }],
     });
-
+  
     if (!file) {
       throw new NotFoundException('File not found');
     }
-
-    // Include job status and progress information
+  
+    const fileData = file.toJSON() as any;
+  
     const response = {
-      ...file,
-      processingStatus: file.job ? file.job.status : 'unknown',
-      processingStarted: file.job?.startedAt,
-      processingCompleted: file.job?.completedAt,
-      error: file.job?.errorMessage,
+      ...fileData,
+      processingStatus: fileData.job ? fileData.job.status : 'unknown',
+      processingStarted: fileData.job?.startedAt,
+      processingCompleted: fileData.job?.completedAt,
+      error: fileData.job?.errorMessage,
     };
-
+  
     return response;
   }
+  
 
   async findAll(user: User, page = 1, limit = 10) {
     const { rows: files, count: total } = await this.fileModel.findAndCountAll({
