@@ -35,14 +35,15 @@ import { getDatabaseConfig } from './config/database.config';
 
     // Queue
     BullModule.forRootAsync({
-      imports: [ConfigModule],
+      inject: [ConfigService],
       useFactory: (configService: ConfigService) => ({
         redis: {
-          host: configService.get('REDIS_HOST'),
-          port: configService.get('REDIS_PORT'),
-        },
-      }),
-      inject: [ConfigService],
+          host: 'yamabiko.proxy.rlwy.net',
+          port: 11440,
+          username: 'default',
+          password: 'wZHipAGzMBqYunUnTtnMFShNXguJLpVi'
+        }
+      })
     }),
 
     // Feature modules
