@@ -1,0 +1,36 @@
+import { Column, Model, Table, DataType, HasOne } from 'sequelize-typescript';
+import { Job } from './job.model'; // Adjust the path as per your project structure
+
+
+@Table({
+  tableName: 'files',
+  timestamps: true,
+})
+export class File extends Model {
+  @Column
+  originalname: string;
+
+  @Column
+  filename: string;
+
+  @Column
+  mimetype: string;
+
+  @Column
+  destination: string;
+
+  @Column
+  status: string;
+
+  @Column
+  userId: number;
+
+  @Column(DataType.TEXT)
+  extractedData: string;
+
+  @Column(DataType.DATE)
+  uploadedAt: Date;
+
+  @HasOne(() => Job)
+  job: Job;
+}
