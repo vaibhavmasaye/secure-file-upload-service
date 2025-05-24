@@ -29,8 +29,12 @@ export class File extends Model {
   @Column
   status: string;
 
-  @Column(DataType.TEXT)
-  extractedData: string;
+  @Column({ 
+    type: DataType.JSONB,
+    allowNull: true,
+    defaultValue: null 
+  })
+  extractedData: Record<string, any>;
 
   @Column(DataType.DATE)
   uploadedAt: Date;
